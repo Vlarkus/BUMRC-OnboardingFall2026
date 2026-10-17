@@ -11,7 +11,7 @@ from scipy.spatial import cKDTree
 SAMPLES = 800  # candidate plans per step
 HORIZON = 30  # steps per plan
 DT = 0.1  # s per step, so plans look 3 s ahead
-V_MAX, W_MAX = 1.5, 6.0  # m/s, rad/s: the rover's speed limits
+V_MAX, W_MAX = 1.5, 3.0  # m/s, rad/s: the rover's speed limits
 ACCEL_V, ACCEL_W = 1.0, 4.0  # m/s^2, rad/s^2: how fast the rover can change speed
 NOISE = (0.4, 1.0)  # std of the noise added to v and w
 TEMPERATURE = 2.0  # lower: trust the best few candidates; higher: average more of them
