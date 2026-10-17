@@ -30,7 +30,32 @@ def astar(blocked, cost, start, goal):
     there were no obstacles. Every cell costs at least 1, so h never overestimates the remaining cost,
     which is what guarantees A* returns the cheapest path.
     """
-    raise NotImplementedError('astar')
+    def h(cell):
+        dr, dc = abs(cell[0] - goal[0]), abs(cell[1] - goal[1])
+        return (dr + dc) + (math.sqrt(2) - 2) * min(dr, dc)  # octile distance
+
+    g = {start: 0.0}
+    came_from = {}
+    frontier = [(h(start), start)]
+    while frontier:
+        _, cell = heapq.heappop(frontier)
+        if cell == goal:
+            path = [cell]
+            while cell in came_from:
+                cell = came_from[cell]
+                path.append(cell)
+            return path[::-1]
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                n = (cell[0] + dr, cell[1] + dc)
+                if n == cell or not (0 <= n[0] < blocked.shape[0] and 0 <= n[1] < blocked.shape[1]) or blocked[n]:
+                    continue
+                new_g = g[cell] + math.hypot(dr, dc) * cost[n]
+                if new_g < g.get(n, math.inf):
+                    g[n] = new_g
+                    came_from[n] = cell
+                    heapq.heappush(frontier, (new_g + h(n), n))
+    return None
 
 
 def costmap(grid):

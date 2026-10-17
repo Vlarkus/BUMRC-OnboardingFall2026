@@ -30,7 +30,17 @@ def rollout(state, controls):
     ACCEL_W), then yaw += w * DT, x += v * cos(yaw) * DT, y += v * sin(yaw) * DT. Simulate all K plans
     at once with numpy; only loop over the T steps.
     """
-    raise NotImplementedError('rollout')
+    k, t_steps = controls.shape[:2]
+    x, y, yaw, v, w = (np.full(k, float(value)) for value in state)
+    poses = np.empty((k, t_steps, 3))
+    for t in range(t_steps):
+        v = v + np.clip(controls[:, t, 0] - v, -ACCEL_V * DT, ACCEL_V * DT)
+        w = w + np.clip(controls[:, t, 1] - w, -ACCEL_W * DT, ACCEL_W * DT)
+        yaw = yaw + w * DT
+        x = x + v * np.cos(yaw) * DT
+        y = y + v * np.sin(yaw) * DT
+        poses[:, t] = np.stack([x, y, yaw], axis=1)
+    return poses
 
 
 def trajectory_cost(poses, path_lookup, obstacle_distance):
@@ -46,13 +56,27 @@ def trajectory_cost(poses, path_lookup, obstacle_distance):
     once a trajectory collides or strays more than MAX_PATH_DEVIATION from the path; otherwise cutting
     a corner of the slalom looks like progress. The W_ constants are a starting point for the weights.
     """
-    raise NotImplementedError('trajectory_cost')
+    k, t_steps = poses.shape[:2]
+    points = poses[:, :, :2].reshape(-1, 2)
+    off_path, along = (a.reshape(k, t_steps) for a in path_lookup(points))
+    clearance = obstacle_distance(points).reshape(k, t_steps)
+
+    collided = clearance < ROBOT_RADIUS
+    # Progress counts only up to the first step that collides or strays too far from the path
+    still_valid = np.cumsum(collided | (off_path > MAX_PATH_DEVIATION), axis=1) == 0
+    progress = np.where(still_valid, along, 0.0).max(axis=1)
+
+    return (-W_PROGRESS * progress
+            + W_PATH * off_path.mean(axis=1)
+            + W_OBSTACLE * np.clip(SAFE_DISTANCE - clearance, 0.0, None).mean(axis=1)
+            + W_COLLISION * collided.any(axis=1))
 
 
 def mppi_weights(costs):
     """Weight for each candidate: exp(-(cost - lowest cost) / TEMPERATURE), normalized to sum to 1.
     Subtracting the lowest cost first keeps exp() from underflowing to all zeros."""
-    raise NotImplementedError('mppi_weights')
+    w = np.exp(-(costs - costs.min()) / TEMPERATURE)
+    return w / w.sum()
 
 
 class MPPI:
