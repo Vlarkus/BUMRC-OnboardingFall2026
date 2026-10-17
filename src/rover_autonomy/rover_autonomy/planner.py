@@ -3,16 +3,19 @@
 You write astar(). The rest is provided: costmap() turns the map into blocked cells and cell costs,
 plan_course() runs A* through a point just before and just after each gate, and smooth() tidies the path.
 """
+
 import heapq
 import math
 
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 
-ROBOT_RADIUS = 0.28    # m: cells closer than this to an obstacle are blocked
-SOFT_RADIUS = 0.9      # m: cells closer than this cost extra, so paths keep to the middle of lanes
-SOFT_WEIGHT = 4.0      # cost of a cell right at ROBOT_RADIUS is 1 + SOFT_WEIGHT
-GATE_OFFSET = 0.6      # m: plan through points this far before and after each gate
+ROBOT_RADIUS = 0.28  # m: cells closer than this to an obstacle are blocked
+SOFT_RADIUS = (
+    0.9  # m: cells closer than this cost extra, so paths keep to the middle of lanes
+)
+SOFT_WEIGHT = 4.0  # cost of a cell right at ROBOT_RADIUS is 1 + SOFT_WEIGHT
+GATE_OFFSET = 0.6  # m: plan through points this far before and after each gate
 PLAN_RESOLUTION = 0.1  # m: A* searches a coarser copy of the 5 cm map
 
 
@@ -30,32 +33,45 @@ def astar(blocked, cost, start, goal):
     there were no obstacles. Every cell costs at least 1, so h never overestimates the remaining cost,
     which is what guarantees A* returns the cheapest path.
     """
-    def h(cell):
-        dr, dc = abs(cell[0] - goal[0]), abs(cell[1] - goal[1])
-        return (dr + dc) + (math.sqrt(2) - 2) * min(dr, dc)  # octile distance
 
     g = {start: 0.0}
     came_from = {}
-    frontier = [(h(start), start)]
+    frontier = [(octile_distance(start, goal), start)]
     while frontier:
         _, cell = heapq.heappop(frontier)
         if cell == goal:
-            path = [cell]
-            while cell in came_from:
-                cell = came_from[cell]
-                path.append(cell)
-            return path[::-1]
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                n = (cell[0] + dr, cell[1] + dc)
-                if n == cell or not (0 <= n[0] < blocked.shape[0] and 0 <= n[1] < blocked.shape[1]) or blocked[n]:
-                    continue
-                new_g = g[cell] + math.hypot(dr, dc) * cost[n]
-                if new_g < g.get(n, math.inf):
-                    g[n] = new_g
-                    came_from[n] = cell
-                    heapq.heappush(frontier, (new_g + h(n), n))
+            return reconstruct_path(came_from, goal)
+        for n, step in neighbors(cell, blocked):
+            new_g = g[cell] + step * cost[n]
+            if new_g < g.get(n, math.inf):
+                g[n] = new_g
+                came_from[n] = cell
+                heapq.heappush(frontier, (new_g + octile_distance(n, goal), n))
     return None
+
+
+def octile_distance(cell, goal):
+    """Length of the shortest 8-connected path from cell to goal with no obstacles: the A* heuristic."""
+    dr, dc = abs(cell[0] - goal[0]), abs(cell[1] - goal[1])
+    return (dr + dc) + (math.sqrt(2) - 2) * min(dr, dc)
+
+
+def reconstruct_path(came_from, goal):
+    """Follow the back-pointers from goal to the start, and return the cells in start-to-goal order."""
+    path = [goal]
+    while path[-1] in came_from:
+        path.append(came_from[path[-1]])
+    return path[::-1]
+
+
+def neighbors(cell, blocked):
+    """The unblocked 8-connected neighbours of cell inside the grid, as (neighbour, step length) pairs."""
+    height, width = blocked.shape
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            n = (cell[0] + dr, cell[1] + dc)
+            if n != cell and 0 <= n[0] < height and 0 <= n[1] < width and not blocked[n]:
+                yield n, math.hypot(dr, dc)
 
 
 def costmap(grid):
@@ -63,7 +79,7 @@ def costmap(grid):
     d = grid.distance
     blocked = d < ROBOT_RADIUS
     closeness = np.clip((SOFT_RADIUS - d) / (SOFT_RADIUS - ROBOT_RADIUS), 0.0, 1.0)
-    return blocked, 1.0 + SOFT_WEIGHT * closeness ** 2
+    return blocked, 1.0 + SOFT_WEIGHT * closeness**2
 
 
 def plan_course(grid, start_xy, gates):
@@ -78,7 +94,10 @@ def plan_course(grid, start_xy, gates):
 
     def free_cell(x, y):
         row, col = coarse.to_cell(x, y)
-        row, col = int(np.clip(row, 0, coarse.height - 1)), int(np.clip(col, 0, coarse.width - 1))
+        row, col = (
+            int(np.clip(row, 0, coarse.height - 1)),
+            int(np.clip(col, 0, coarse.width - 1)),
+        )
         return int(nearest[0][row, col]), int(nearest[1][row, col])
 
     cells = [free_cell(*start_xy)]
@@ -97,11 +116,19 @@ def smooth(path, spacing=0.1, window=7):
     """Round off the grid's staircase with a moving average, then space the points evenly."""
     if len(path) > window:
         pad = window // 2
-        padded = np.vstack([np.repeat(path[:1], pad, axis=0), path, np.repeat(path[-1:], pad, axis=0)])
+        padded = np.vstack(
+            [np.repeat(path[:1], pad, axis=0), path, np.repeat(path[-1:], pad, axis=0)]
+        )
         kernel = np.ones(window) / window
-        path = np.column_stack([np.convolve(padded[:, i], kernel, mode='valid') for i in range(2)])
-    s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))])
+        path = np.column_stack(
+            [np.convolve(padded[:, i], kernel, mode="valid") for i in range(2)]
+        )
+    s = np.concatenate(
+        [[0.0], np.cumsum(np.linalg.norm(np.diff(path, axis=0), axis=1))]
+    )
     if s[-1] < spacing:
         return path
     s_even = np.arange(0.0, s[-1], spacing)
-    return np.column_stack([np.interp(s_even, s, path[:, 0]), np.interp(s_even, s, path[:, 1])])
+    return np.column_stack(
+        [np.interp(s_even, s, path[:, 0]), np.interp(s_even, s, path[:, 1])]
+    )

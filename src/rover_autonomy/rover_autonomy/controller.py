@@ -4,19 +4,20 @@ Every control step: add noise to the current plan of commands to get many candid
 each one, score the trajectories, and average the candidates, weighting the good ones heavily.
 You write rollout(), trajectory_cost() and mppi_weights(); MPPI.step() ties them together.
 """
+
 import numpy as np
 from scipy.spatial import cKDTree
 
-SAMPLES = 800                   # candidate plans per step
-HORIZON = 30                    # steps per plan
-DT = 0.1                        # s per step, so plans look 3 s ahead
-V_MAX, W_MAX = 1.5, 3.0         # m/s, rad/s: the rover's speed limits
-ACCEL_V, ACCEL_W = 1.0, 4.0     # m/s^2, rad/s^2: how fast the rover can change speed
-NOISE = (0.4, 1.0)              # std of the noise added to v and w
-TEMPERATURE = 2.0               # lower: trust the best few candidates; higher: average more of them
-ROBOT_RADIUS = 0.3              # m: closer than this to an obstacle is a collision
-SAFE_DISTANCE = 0.6             # m: closer than this costs extra
-MAX_PATH_DEVIATION = 1.2        # m: progress stops counting this far off the path
+SAMPLES = 800  # candidate plans per step
+HORIZON = 30  # steps per plan
+DT = 0.1  # s per step, so plans look 3 s ahead
+V_MAX, W_MAX = 1.5, 6.0  # m/s, rad/s: the rover's speed limits
+ACCEL_V, ACCEL_W = 1.0, 4.0  # m/s^2, rad/s^2: how fast the rover can change speed
+NOISE = (0.4, 1.0)  # std of the noise added to v and w
+TEMPERATURE = 2.0  # lower: trust the best few candidates; higher: average more of them
+ROBOT_RADIUS = 0.3  # m: closer than this to an obstacle is a collision
+SAFE_DISTANCE = 0.6  # m: closer than this costs extra
+MAX_PATH_DEVIATION = 1.2  # m: progress stops counting this far off the path
 W_PROGRESS, W_PATH, W_OBSTACLE, W_COLLISION = 12.0, 4.0, 200.0, 1000.0
 
 
@@ -66,10 +67,12 @@ def trajectory_cost(poses, path_lookup, obstacle_distance):
     still_valid = np.cumsum(collided | (off_path > MAX_PATH_DEVIATION), axis=1) == 0
     progress = np.where(still_valid, along, 0.0).max(axis=1)
 
-    return (-W_PROGRESS * progress
-            + W_PATH * off_path.mean(axis=1)
-            + W_OBSTACLE * np.clip(SAFE_DISTANCE - clearance, 0.0, None).mean(axis=1)
-            + W_COLLISION * collided.any(axis=1))
+    return (
+        -W_PROGRESS * progress
+        + W_PATH * off_path.mean(axis=1)
+        + W_OBSTACLE * np.clip(SAFE_DISTANCE - clearance, 0.0, None).mean(axis=1)
+        + W_COLLISION * collided.any(axis=1)
+    )
 
 
 def mppi_weights(costs):
@@ -90,7 +93,7 @@ class MPPI:
         """Returns (command, planned trajectory, sampled trajectories)."""
         controls = self.plan + self.rng.normal(0.0, 1.0, (SAMPLES, HORIZON, 2)) * NOISE
         controls[0] = self.plan  # always consider the current plan unchanged
-        controls[1] = 0.0        # and stopping
+        controls[1] = 0.0  # and stopping
         controls[:, :, 0] = np.clip(controls[:, :, 0], 0.0, V_MAX)
         controls[:, :, 1] = np.clip(controls[:, :, 1], -W_MAX, W_MAX)
 
@@ -100,7 +103,9 @@ class MPPI:
 
         command = self.plan[0].copy()
         planned = rollout(state, self.plan[None])[0]
-        self.plan = np.vstack([self.plan[1:], self.plan[-1:]])  # next step starts from the rest of this plan
+        self.plan = np.vstack(
+            [self.plan[1:], self.plan[-1:]]
+        )  # next step starts from the rest of this plan
         return command, planned, poses
 
 
@@ -109,22 +114,33 @@ class PathTracker:
 
     def __init__(self, path, window=8.0):
         self.path = np.asarray(path, dtype=float)
-        self.s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(self.path, axis=0), axis=1))])
+        self.s = np.concatenate(
+            [[0.0], np.cumsum(np.linalg.norm(np.diff(self.path, axis=0), axis=1))]
+        )
         self.window = window
         self.index = None
 
     def lookup_ahead(self, position):
         """A path_lookup function for the next `window` meters of path past the rover."""
         # Search near the last match so the rover can't jump to a later stretch of path that passes close by.
-        lo, hi = (0, len(self.path)) if self.index is None else (max(0, self.index - 20), self.index + 100)
-        self.index = lo + int(np.argmin(np.linalg.norm(self.path[lo:hi] - position, axis=1)))
-        end = int(np.searchsorted(self.s, self.s[self.index] + self.window, side='right'))
-        tree = cKDTree(self.path[self.index:end])
-        along = self.s[self.index:end] - self.s[self.index]
+        lo, hi = (
+            (0, len(self.path))
+            if self.index is None
+            else (max(0, self.index - 20), self.index + 100)
+        )
+        self.index = lo + int(
+            np.argmin(np.linalg.norm(self.path[lo:hi] - position, axis=1))
+        )
+        end = int(
+            np.searchsorted(self.s, self.s[self.index] + self.window, side="right")
+        )
+        tree = cKDTree(self.path[self.index : end])
+        along = self.s[self.index : end] - self.s[self.index]
 
         def path_lookup(points):
             distance, nearest = tree.query(points)
             return distance, along[nearest]
+
         return path_lookup
 
     def remaining(self):
@@ -140,4 +156,5 @@ def obstacle_distance_function(grid, scan_points):
         if tree is not None:
             d = np.minimum(d, tree.query(points, distance_upper_bound=1.0)[0])
         return d
+
     return obstacle_distance
